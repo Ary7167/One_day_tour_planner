@@ -1,10 +1,7 @@
 ollama
 neo4j
 streamlit
-folium
-streamlit-folium
 requests
 datetime
 uuid
-hashlib
 typing
