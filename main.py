@@ -4,20 +4,27 @@ import neo4j
 import requests
 import datetime
 import uuid
+import hashlib
 from typing import Dict, List, Any
 
 class TourPlannerApp:
     def __init__(self):
+        # Add users: Replace with a DB or file-based store for production
+        self.users = {
+            "admin": hashlib.sha256("password123".encode()).hexdigest(),
+            "user1": hashlib.sha256("userpass".encode()).hexdigest()
+        }
+
         # Initialize session state
+        if 'authenticated' not in st.session_state:
+            st.session_state.authenticated = False
         if 'user_id' not in st.session_state:
             st.session_state.user_id = str(uuid.uuid4())
-        
         if 'messages' not in st.session_state:
             st.session_state.messages = []
-        
         if 'current_trip' not in st.session_state:
             st.session_state.current_trip = {}
-        
+
         # Neo4j Connection (replace with your credentials)
         try:
             self.neo4j_driver = neo4j.GraphDatabase.driver(
@@ -27,6 +34,26 @@ class TourPlannerApp:
         except Exception as e:
             st.error(f"Neo4j Connection Error: {e}")
             self.neo4j_driver = None
+
+    def login(self):
+        """Simple login function with username/password"""
+        st.title("🔒 Login to Tour Planner")
+        username = st.text_input("Username")
+        password = st.text_input("Password", type="password")
+
+        if st.button("Login"):
+            if username in self.users and \
+               self.users[username] == hashlib.sha256(password.encode()).hexdigest():
+                st.session_state.authenticated = True
+                st.success("Logged in successfully!")
+            else:
+                st.error("Invalid username or password.")
+
+    def logout(self):
+        """Logout functionality"""
+        if st.button("Logout"):
+            st.session_state.authenticated = False
+            st.experimental_rerun()
 
     def get_weather(self, city: str) -> Dict[str, Any]:
         """Fetch weather information for the given city"""
@@ -48,25 +75,21 @@ class TourPlannerApp:
 
     def generate_itinerary(self, city: str, interests: List[str], budget: float, date: datetime.date) -> Dict[str, Any]:
         """Generate a personalized itinerary using Ollama"""
+        if not st.session_state.authenticated:
+            st.error("You must be logged in to generate an itinerary.")
+            return {}
+
         try:
-            # Prepare a comprehensive prompt for itinerary generation
             prompt = (
                 f"Create a detailed one-day tour itinerary for {city} on {date}. "
                 f"Traveler interests: {', '.join(interests)}. "
                 f"Total budget: ${budget}. "
-                "Provide: "
-                "1. List of attractions with timings "
-                "2. Estimated travel time between locations "
-                "3. Budget breakdown "
-                "4. Recommended lunch spot "
-                "5. Tips for the day"
+                "Provide: attractions, timings, travel time, budget, and tips."
             )
-
             response = ollama.chat(
-                model='llama2',
+                model="llama2",
                 messages=[{'role': 'user', 'content': prompt}]
             )
-
             return {
                 "raw_itinerary": response['message']['content'],
                 "city": city,
@@ -75,7 +98,7 @@ class TourPlannerApp:
                 "interests": interests
             }
         except Exception as e:
-            st.error(f"Itinerary generation error: {e}")
+            st.error(f"Error generating itinerary: {e}")
             return {"raw_itinerary": "Unable to generate itinerary"}
 
     def save_trip_memory(self, trip_details: Dict[str, Any]):
@@ -112,87 +135,82 @@ class TourPlannerApp:
                 st.error(f"Error saving trip memory: {e}")
 
     def run(self):
-        """Main Streamlit application"""
-        st.title("🌍 Personalized Tour Planner")
+        """Main application entry point with login"""
+        if not st.session_state.authenticated:
+            self.login()
+        else:
+            self.logout()  # Logout button
+            st.title("🌍 Personalized Tour Planner")
 
-        # Sidebar for trip planning
-        with st.sidebar:
-            st.header("Plan Your Trip")
-            city = st.text_input("Destination City", placeholder="Rome, Paris...")
-            travel_date = st.date_input("Travel Date", datetime.date.today())
-            interests = st.multiselect(
-                "Your Interests", 
-                ["Historical Sites", "Food", "Nature", "Shopping", "Art", "Museums"]
-            )
-            budget = st.number_input("Total Budget ($)", min_value=50, max_value=1000, value=200)
-
-            # Plan Trip Button
-            if st.button("Generate Trip Plan"):
-                if city and interests:
-                    # Generate Itinerary
-                    itinerary = self.generate_itinerary(city, interests, budget, travel_date)
-                    st.session_state.current_trip = itinerary
-
-                    # Get Weather
-                    weather = self.get_weather(city)
-
-                    # Display Results
-                    st.subheader(f"🌞 Weather in {city}")
-                    st.write(f"Temperature: {weather['temperature']}°C")
-                    st.write(f"Conditions: {weather['description']}")
-
-                    st.subheader("📍 Your Personalized Itinerary")
-                    st.write(itinerary['raw_itinerary'])
-
-                    # Save Trip to Memory
-                    self.save_trip_memory(itinerary)
-                else:
-                    st.warning("Please enter a city and select interests")
-
-        # Conversation Interface
-        st.header("Trip Assistant")
-        
-        # Display chat history
-        for message in st.session_state.messages:
-            with st.chat_message(message["role"]):
-                st.markdown(message["content"])
-        
-        # User input
-        if prompt := st.chat_input("Ask about your trip or get recommendations"):
-            # Add user message to chat history
-            st.session_state.messages.append({"role": "user", "content": prompt})
-            
-            # Context-aware response generation
-            context = {
-                "current_trip": st.session_state.get('current_trip', {}),
-                "chat_history": st.session_state.messages
-            }
-            
-            try:
-                # Generate response using Ollama with context
-                response = ollama.chat(
-                    model='llama2',
-                    messages=[
-                        {'role': 'system', 'content': f"You are a helpful travel assistant. Context: {context}"},
-                        {'role': 'user', 'content': prompt}
-                    ]
+            # Sidebar for trip planning
+            with st.sidebar:
+                st.header("Plan Your Trip")
+                city = st.text_input("Destination City", placeholder="Rome, Paris...")
+                travel_date = st.date_input("Travel Date", datetime.date.today())
+                interests = st.multiselect(
+                    "Your Interests", 
+                    ["Historical Sites", "Food", "Nature", "Shopping", "Art", "Museums"]
                 )
-                
-                # Display and store AI response
-                with st.chat_message("assistant"):
-                    st.markdown(response['message']['content'])
-                
-                st.session_state.messages.append({
-                    "role": "assistant", 
-                    "content": response['message']['content']
-                })
-            
-            except Exception as e:
-                st.error(f"Error generating response: {e}")
+                budget = st.number_input("Total Budget ($)", min_value=50, max_value=1000, value=200)
+
+                # Plan Trip Button
+                if st.button("Generate Trip Plan"):
+                    if city and interests:
+                        # Generate Itinerary
+                        itinerary = self.generate_itinerary(city, interests, budget, travel_date)
+                        st.session_state.current_trip = itinerary
+
+                        # Get Weather
+                        weather = self.get_weather(city)
+
+                        # Display Results
+                        st.subheader(f"🌞 Weather in {city}")
+                        st.write(f"Temperature: {weather['temperature']}°C")
+                        st.write(f"Conditions: {weather['description']}")
+
+                        st.subheader("📍 Your Personalized Itinerary")
+                        st.write(itinerary['raw_itinerary'])
+
+                        # Save Trip to Memory
+                        self.save_trip_memory(itinerary)
+                    else:
+                        st.warning("Please enter a city and select interests")
+
+            # Conversation Interface
+            st.header("Trip Assistant")
+            # Display chat history
+            for message in st.session_state.messages:
+                with st.chat_message(message["role"]):
+                    st.markdown(message["content"])
+            # User input
+            if prompt := st.chat_input("Ask about your trip or get recommendations"):
+                st.session_state.messages.append({"role": "user", "content": prompt})
+                context = {
+                    "current_trip": st.session_state.get('current_trip', {}),
+                    "chat_history": st.session_state.messages
+                }
+                try:
+                    response = ollama.chat(
+                        model='llama2',
+                        messages=[
+                            {'role': 'system', 'content': f"You are a helpful travel assistant. Context: {context}"},
+                            {'role': 'user', 'content': prompt}
+                        ]
+                    )
+                    with st.chat_message("assistant"):
+                        st.markdown(response['message']['content'])
+                    st.session_state.messages.append({
+                        "role": "assistant", 
+                        "content": response['message']['content']
+                    })
+                except Exception as e:
+                    st.error(f"Error generating response: {e}")
+
 
 def main():
     app = TourPlannerApp()
     app.run()
+
 
 if __name__ == "__main__":
     main()
