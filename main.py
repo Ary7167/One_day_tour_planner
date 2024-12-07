@@ -3,6 +3,7 @@ import requests
 import ollama  # Ensure you have Ollama installed and running
 import uuid
 import datetime
+import neo4j
 from typing import Dict, List, Any
 
 class TourPlannerApp:
@@ -16,6 +17,7 @@ class TourPlannerApp:
         
         if 'current_trip' not in st.session_state:
             st.session_state.current_trip = {}
+        
         try:
             self.neo4j_driver = neo4j.GraphDatabase.driver(
                 "bolt://localhost:7687", 
@@ -30,7 +32,7 @@ class TourPlannerApp:
         try:
             # Using Ollama to generate responses from the model
             response = ollama.chat(
-                model='llama2',  # Replace with the correct model name
+                model='llama3.2',  # Replace with the correct model name
                 messages=[{'role': 'user', 'content': prompt}]
             )
             return response['message']['content']  # Return the model's response
@@ -42,7 +44,7 @@ class TourPlannerApp:
         """Fetch weather information for the given city."""
         try:
             #api_key = st.secrets.get("OPENWEATHER_API_KEY", "your_openweather_api_key")
-            api_key = b70f1a98fdea996089fbd445af2a835a
+            api_key = 'b70f1a98fdea996089fbd445af2a835a'
             response = requests.get(
                 f"https://api.openweathermap.org/data/2.5/weather?q={city}&appid={api_key}&units=metric"
             )
@@ -61,7 +63,7 @@ class TourPlannerApp:
         """Fetch the latest news using an API."""
         try:
             #api_key = st.secrets.get("NEWS_API_KEY", "your_news_api_key")
-            api_key = 92435d2f9e734d0997164bec672c4450
+            api_key = '92435d2f9e734d0997164bec672c4450'
             response = requests.get(
                 f"https://newsapi.org/v2/top-headlines?country=us&apiKey={api_key}"
             )
@@ -124,7 +126,6 @@ class TourPlannerApp:
         except Exception as e:
             st.error(f"Route optimization error: {e}")
             return {"distance": "N/A", "time": "N/A", "route": "Unable to optimize"}
-
     def save_trip_memory(self, trip_details: Dict[str, Any]):
         """Save trip details to the Neo4j graph database."""
         """Save trip details to Neo4j graph database"""
@@ -158,60 +159,11 @@ class TourPlannerApp:
                 st.success("Trip memory saved successfully!")
             except Exception as e:
                 st.error(f"Error saving trip memory: {e}")
-
+                
     def run(self):
         """Main Streamlit application."""
         st.title("🌍 Personalized Tour Planner")
-
-        # Sidebar for trip planning
-        with st.sidebar:
-            st.header("Plan Your Trip")
-            city = st.text_input("Destination City", placeholder="Rome, Paris...")
-            travel_date = st.date_input("Travel Date", datetime.date.today())
-            interests = st.multiselect(
-                "Your Interests", 
-                ["Historical Sites", "Food", "Nature", "Shopping", "Art", "Museums"]
-            )
-            budget = st.number_input("Total Budget ($)", min_value=50, max_value=1000, value=200)
-
-            # Plan Trip Button
-            if st.button("Generate Trip Plan"):
-                if city and interests:
-                    # Generate Itinerary
-                    itinerary = self.generate_itinerary(city, interests, budget, travel_date)
-                    st.session_state.current_trip = itinerary
-
-                    # Get Weather
-                    weather = self.get_weather(city)
-
-                    # Get News
-                    news = self.get_news()
-
-                    # Optimize Route
-                    optimization = self.optimize_route("Starting Location", city)  # Example start location
-                    
-                    # Display Results
-                    st.subheader(f"🌞 Weather in {city}")
-                    st.write(f"Temperature: {weather['temperature']}°C")
-                    st.write(f"Conditions: {weather['description']}")
-
-                    st.subheader("📍 Your Personalized Itinerary")
-                    st.write(itinerary['raw_itinerary'])
-
-                    st.subheader("📰 Latest News")
-                    for article in news:
-                        st.write(f"**{article['title']}**: {article['description']}")
-                        st.markdown(f"[Read more]({article['url']})")
-
-                    st.subheader("🚗 Route Optimization")
-                    st.write(f"Distance: {optimization['distance']} meters")
-                    st.write(f"Estimated Time: {optimization['time']} seconds")
-                    
-                    # Save Trip to Memory
-                    self.save_trip_memory(itinerary)
-                else:
-                    st.warning("Please enter a city and select interests")
-
+        
         # Conversation Interface
         st.header("Trip Assistant")
         
@@ -225,27 +177,27 @@ class TourPlannerApp:
             # Add user message to chat history
             st.session_state.messages.append({"role": "user", "content": prompt})
             
-            # Context-aware response generation
-            context = {
-                "current_trip": st.session_state.get('current_trip', {}),
-                "chat_history": st.session_state.messages
-            }
-            
-            try:
-                # Generate response using Ollama with context
-                response = self.query_ollama_model(f"You are a helpful travel assistant. Context: {context}. {prompt}")
+        # Context-aware response generation
+        context = {
+            "current_trip": st.session_state.get('current_trip', {}),
+            "chat_history": st.session_state.messages
+        }
                 
-                # Display and store AI response
-                with st.chat_message("assistant"):
-                    st.markdown(response)
-                
-                st.session_state.messages.append({
-                    "role": "assistant", 
-                    "content": response
-                })
+        try:
+            # Generate response using Ollama with context
+            response = self.query_ollama_model(f"You are a helpful travel assistant. Context: {context}. {prompt}")
             
-            except Exception as e:
-                st.error(f"Error generating response: {e}")
+            # Display and store AI response
+            with st.chat_message("assistant"):
+                st.markdown(response)
+            
+            st.session_state.messages.append({
+                "role": "assistant", 
+                "content": response
+            })
+        
+        except Exception as e:
+            st.error(f"Error generating response: {e}")
 
 def main():
     app = TourPlannerApp()
