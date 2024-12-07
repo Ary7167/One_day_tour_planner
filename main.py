@@ -16,6 +16,14 @@ class TourPlannerApp:
         
         if 'current_trip' not in st.session_state:
             st.session_state.current_trip = {}
+        try:
+            self.neo4j_driver = neo4j.GraphDatabase.driver(
+                "bolt://localhost:7687", 
+                auth=("neo4j", "1e_mRSKgAF-LOm_1Z_jmrjGJcRE8lXwCx0I2prKwGyY")
+            )
+        except Exception as e:
+            st.error(f"Neo4j Connection Error: {e}")
+            self.neo4j_driver = None
 
     def query_ollama_model(self, prompt: str) -> str:
         """Function to query Ollama for generating responses."""
@@ -119,7 +127,37 @@ class TourPlannerApp:
 
     def save_trip_memory(self, trip_details: Dict[str, Any]):
         """Save trip details to the Neo4j graph database."""
-        # Code for saving to Neo4j (same as previously written)
+        """Save trip details to Neo4j graph database"""
+        if not self.neo4j_driver:
+            st.warning("Neo4j not connected. Cannot save trip memory.")
+            return
+
+        with self.neo4j_driver.session() as session:
+            try:
+                session.run(
+                    """
+                    MERGE (u:User {id: $user_id})
+                    MERGE (t:Trip {
+                        city: $city, 
+                        date: $date, 
+                        unique_id: $unique_id
+                    })
+                    MERGE (u)-[:TOOK_TRIP]->(t)
+                    SET t.budget = $budget,
+                        t.interests = $interests,
+                        t.itinerary = $itinerary
+                    """,
+                    user_id=st.session_state.user_id,
+                    city=trip_details['city'],
+                    date=str(trip_details['date']),
+                    unique_id=str(uuid.uuid4()),
+                    budget=trip_details['budget'],
+                    interests=trip_details['interests'],
+                    itinerary=trip_details.get('raw_itinerary', '')
+                )
+                st.success("Trip memory saved successfully!")
+            except Exception as e:
+                st.error(f"Error saving trip memory: {e}")
 
     def run(self):
         """Main Streamlit application."""
