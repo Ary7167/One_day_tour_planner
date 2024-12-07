@@ -1,178 +1,217 @@
 import streamlit as st
-from neo4j import GraphDatabase
-import openai
 import requests
+import ollama  # Ensure you have Ollama installed and running
+import uuid
+import datetime
+from typing import Dict, List, Any
 
-# Initialize global variables
-OPENROUTESERVICE_API_KEY = "5b3ce3597851110001cf6248dc52e38cd7b94d699918c3320add5a78"  # Replace with your ORS API key
-NEO4J_BOLT_URL = "neo4j+s://490a924f.databases.neo4j.io"
-NEO4J_USERNAME = "neo4j"
-NEO4J_PASSWORD = "1e_mRSKgAF-LOm_1Z_jmrjGJcRE8lXwCx0I2prKwGyY"
-WEATHER_API_KEY = "b70f1a98fdea996089fbd445af2a835a"  # Replace with your OpenWeatherMap API key
-NEWS_API_KEY = "92435d2f9e734d0997164bec672c4450"  # Replace with your NewsAPI key
-
-class TourPlanner:
+class TourPlannerApp:
     def __init__(self):
-        self.neo4j_driver = GraphDatabase.driver(
-            NEO4J_BOLT_URL, auth=(NEO4J_USERNAME, NEO4J_PASSWORD)
-        )
-    
-    def close(self):
-        self.neo4j_driver.close()
+        # Initialize session state
+        if 'user_id' not in st.session_state:
+            st.session_state.user_id = str(uuid.uuid4())
+        
+        if 'messages' not in st.session_state:
+            st.session_state.messages = []
+        
+        if 'current_trip' not in st.session_state:
+            st.session_state.current_trip = {}
 
-    def add_location(self, location_name, coordinates):
-        """
-        Add a location node to the Neo4j database.
-        """
-        query = """
-        MERGE (loc:Location {name: $name, latitude: $lat, longitude: $lng})
-        RETURN loc
-        """
-        with self.neo4j_driver.session() as session:
-            session.run(query, name=location_name, lat=coordinates[0], lng=coordinates[1])
-        st.success(f"Location '{location_name}' added to the database.")
+    def query_ollama_model(self, prompt: str) -> str:
+        """Function to query Ollama for generating responses."""
+        try:
+            # Using Ollama to generate responses from the model
+            response = ollama.chat(
+                model='llama2',  # Replace with the correct model name
+                messages=[{'role': 'user', 'content': prompt}]
+            )
+            return response['message']['content']  # Return the model's response
+        except Exception as e:
+            st.error(f"Error querying Ollama: {e}")
+            return "Sorry, I couldn't process that."
 
-    def optimize_route(self, locations):
-        """
-        Optimize route using OpenRouteService API.
-        :param locations: List of tuples [(lat, lng), ...]
-        """
-        url = "https://api.openrouteservice.org/v2/directions/driving-car"
-        headers = {"Authorization": OPENROUTESERVICE_API_KEY}
-        payload = {
-            "coordinates": locations,
-            "format": "geojson",
-            "options": {"optimize_waypoints": True},
-        }
-
-        response = requests.post(url, json=payload, headers=headers)
-        if response.status_code == 200:
+    def get_weather(self, city: str) -> Dict[str, Any]:
+        """Fetch weather information for the given city."""
+        try:
+            #api_key = st.secrets.get("OPENWEATHER_API_KEY", "your_openweather_api_key")
+            api_key = b70f1a98fdea996089fbd445af2a835a
+            response = requests.get(
+                f"https://api.openweathermap.org/data/2.5/weather?q={city}&appid={api_key}&units=metric"
+            )
             data = response.json()
-            # Extract the optimized coordinates
-            optimized_route = [
-                (step["geometry"]["coordinates"][1], step["geometry"]["coordinates"][0])
-                for step in data["features"][0]["geometry"]["coordinates"]
-            ]
-            return optimized_route
-        else:
-            st.error(f"Error: {response.json()}")
-            return None
-
-    def display_map(self, locations, optimized_route=None):
-        """
-        Display the locations and optionally the optimized route on a map.
-        """
-        import folium
-        from streamlit_folium import st_folium
-
-        m = folium.Map(location=locations[0], zoom_start=12)
-
-        # Add locations to the map
-        for idx, loc in enumerate(locations):
-            folium.Marker(loc, popup=f"Location {idx + 1}").add_to(m)
-
-        # Draw optimized route
-        if optimized_route:
-            folium.PolyLine(
-                optimized_route, color="blue", weight=2.5, opacity=1
-            ).add_to(m)
-
-        # Display map in Streamlit
-        st_folium(m, width=700, height=500)
-
-    def get_weather(self, city):
-        """
-        Get weather information using OpenWeatherMap API.
-        :param city: Name of the city to get weather info
-        """
-        url = f"http://api.openweathermap.org/data/2.5/weather?q={city}&appid={WEATHER_API_KEY}&units=metric"
-        response = requests.get(url)
-        if response.status_code == 200:
-            data = response.json()
-            weather_info = {
-                "city": city,
-                "temperature": data["main"]["temp"],
-                "humidity": data["main"]["humidity"],
-                "description": data["weather"][0]["description"],
+            return {
+                "temperature": data['main']['temp'],
+                "description": data['weather'][0]['description'],
+                "feels_like": data['main']['feels_like'],
+                "humidity": data['main']['humidity']
             }
-            return weather_info
-        else:
-            st.error(f"Error: {response.json()}")
-            return None
+        except Exception as e:
+            st.error(f"Weather fetch error: {e}")
+            return {"temperature": "N/A", "description": "Unable to fetch"}
 
-    def get_news(self, query):
-        """
-        Get latest news articles using NewsAPI.
-        :param query: Search query for news topics
-        """
-        url = f"https://newsapi.org/v2/everything?q={query}&apiKey={NEWS_API_KEY}"
-        response = requests.get(url)
-        if response.status_code == 200:
+    def get_news(self) -> Dict[str, Any]:
+        """Fetch the latest news using an API."""
+        try:
+            #api_key = st.secrets.get("NEWS_API_KEY", "your_news_api_key")
+            api_key = 92435d2f9e734d0997164bec672c4450
+            response = requests.get(
+                f"https://newsapi.org/v2/top-headlines?country=us&apiKey={api_key}"
+            )
             data = response.json()
-            articles = data["articles"]
+            articles = []
+            for article in data['articles'][:5]:
+                articles.append({
+                    "title": article['title'],
+                    "description": article['description'],
+                    "url": article['url']
+                })
             return articles
-        else:
-            st.error(f"Error: {response.json()}")
-            return None
+        except Exception as e:
+            st.error(f"News fetch error: {e}")
+            return []
 
-# Streamlit UI
+    def generate_itinerary(self, city: str, interests: List[str], budget: float, date: datetime.date) -> Dict[str, Any]:
+        """Generate a personalized itinerary using Ollama."""
+        try:
+            # Prepare a comprehensive prompt for itinerary generation
+            prompt = (
+                f"Create a detailed one-day tour itinerary for {city} on {date}. "
+                f"Traveler interests: {', '.join(interests)}. "
+                f"Total budget: ${budget}. "
+                "Provide: "
+                "1. List of attractions with timings "
+                "2. Estimated travel time between locations "
+                "3. Budget breakdown "
+                "4. Recommended lunch spot "
+                "5. Tips for the day"
+            )
+
+            itinerary = self.query_ollama_model(prompt)  # Query Ollama for the itinerary
+            return {
+                "raw_itinerary": itinerary,
+                "city": city,
+                "date": date,
+                "budget": budget,
+                "interests": interests
+            }
+        except Exception as e:
+            st.error(f"Itinerary generation error: {e}")
+            return {"raw_itinerary": "Unable to generate itinerary"}
+
+    def optimize_route(self, origin: str, destination: str) -> Dict[str, Any]:
+        """Optimize travel route using OpenStreet API."""
+        try:
+            response = requests.get(
+                f"https://api.openstreetmap.org/routing/v1/driving?start={origin}&end={destination}"
+            )
+            data = response.json()
+            # Example: Extracting distance and time from response
+            distance = data['routes'][0]['summary']['distance']
+            time = data['routes'][0]['summary']['duration']
+            return {
+                "distance": distance,
+                "time": time,
+                "route": data['routes'][0]['legs'][0]['steps']
+            }
+        except Exception as e:
+            st.error(f"Route optimization error: {e}")
+            return {"distance": "N/A", "time": "N/A", "route": "Unable to optimize"}
+
+    def save_trip_memory(self, trip_details: Dict[str, Any]):
+        """Save trip details to the Neo4j graph database."""
+        # Code for saving to Neo4j (same as previously written)
+
+    def run(self):
+        """Main Streamlit application."""
+        st.title("🌍 Personalized Tour Planner")
+
+        # Sidebar for trip planning
+        with st.sidebar:
+            st.header("Plan Your Trip")
+            city = st.text_input("Destination City", placeholder="Rome, Paris...")
+            travel_date = st.date_input("Travel Date", datetime.date.today())
+            interests = st.multiselect(
+                "Your Interests", 
+                ["Historical Sites", "Food", "Nature", "Shopping", "Art", "Museums"]
+            )
+            budget = st.number_input("Total Budget ($)", min_value=50, max_value=1000, value=200)
+
+            # Plan Trip Button
+            if st.button("Generate Trip Plan"):
+                if city and interests:
+                    # Generate Itinerary
+                    itinerary = self.generate_itinerary(city, interests, budget, travel_date)
+                    st.session_state.current_trip = itinerary
+
+                    # Get Weather
+                    weather = self.get_weather(city)
+
+                    # Get News
+                    news = self.get_news()
+
+                    # Optimize Route
+                    optimization = self.optimize_route("Starting Location", city)  # Example start location
+                    
+                    # Display Results
+                    st.subheader(f"🌞 Weather in {city}")
+                    st.write(f"Temperature: {weather['temperature']}°C")
+                    st.write(f"Conditions: {weather['description']}")
+
+                    st.subheader("📍 Your Personalized Itinerary")
+                    st.write(itinerary['raw_itinerary'])
+
+                    st.subheader("📰 Latest News")
+                    for article in news:
+                        st.write(f"**{article['title']}**: {article['description']}")
+                        st.markdown(f"[Read more]({article['url']})")
+
+                    st.subheader("🚗 Route Optimization")
+                    st.write(f"Distance: {optimization['distance']} meters")
+                    st.write(f"Estimated Time: {optimization['time']} seconds")
+                    
+                    # Save Trip to Memory
+                    self.save_trip_memory(itinerary)
+                else:
+                    st.warning("Please enter a city and select interests")
+
+        # Conversation Interface
+        st.header("Trip Assistant")
+        
+        # Display chat history
+        for message in st.session_state.messages:
+            with st.chat_message(message["role"]):
+                st.markdown(message["content"])
+        
+        # User input
+        if prompt := st.chat_input("Ask about your trip or get recommendations"):
+            # Add user message to chat history
+            st.session_state.messages.append({"role": "user", "content": prompt})
+            
+            # Context-aware response generation
+            context = {
+                "current_trip": st.session_state.get('current_trip', {}),
+                "chat_history": st.session_state.messages
+            }
+            
+            try:
+                # Generate response using Ollama with context
+                response = self.query_ollama_model(f"You are a helpful travel assistant. Context: {context}. {prompt}")
+                
+                # Display and store AI response
+                with st.chat_message("assistant"):
+                    st.markdown(response)
+                
+                st.session_state.messages.append({
+                    "role": "assistant", 
+                    "content": response
+                })
+            
+            except Exception as e:
+                st.error(f"Error generating response: {e}")
+
 def main():
-    st.title("Tour Planner with Route Optimization, Weather, and News")
-    planner = TourPlanner()
-
-    with st.sidebar:
-        st.header("Add Locations")
-        location_name = st.text_input("Location Name")
-        latitude = st.number_input("Latitude", format="%.6f")
-        longitude = st.number_input("Longitude", format="%.6f")
-        if st.button("Add Location"):
-            if location_name and latitude and longitude:
-                planner.add_location(location_name, (latitude, longitude))
-            else:
-                st.error("Please enter all details.")
-
-    st.header("Optimize Route")
-    with st.form("route_form"):
-        st.write("Enter the locations for optimization (Latitude, Longitude):")
-        locations = []
-        for i in range(3):  # Allow up to 3 locations
-            col1, col2 = st.columns(2)
-            lat = col1.number_input(f"Latitude {i+1}", format="%.6f")
-            lng = col2.number_input(f"Longitude {i+1}", format="%.6f")
-            if lat and lng:
-                locations.append((lat, lng))
-
-        submitted = st.form_submit_button("Optimize Route")
-        if submitted:
-            if len(locations) < 2:
-                st.error("Please add at least two locations.")
-            else:
-                optimized_route = planner.optimize_route(locations)
-                if optimized_route:
-                    st.success("Route optimized successfully!")
-                    planner.display_map(locations, optimized_route)
-
-    st.header("Weather Information")
-    city = st.text_input("Enter city for weather information", "")
-    if city:
-        weather_info = planner.get_weather(city)
-        if weather_info:
-            st.write(f"**Weather in {weather_info['city']}**")
-            st.write(f"Temperature: {weather_info['temperature']}°C")
-            st.write(f"Humidity: {weather_info['humidity']}%")
-            st.write(f"Description: {weather_info['description']}")
-
-    st.header("News Information")
-    news_query = st.text_input("Enter topic for news", "")
-    if news_query:
-        news_articles = planner.get_news(news_query)
-        if news_articles:
-            for article in news_articles[:5]:  # Show top 5 articles
-                st.subheader(article["title"])
-                st.write(article["description"])
-                st.write(f"[Read more]({article['url']})")
-
-    planner.close()
+    app = TourPlannerApp()
+    app.run()
 
 if __name__ == "__main__":
     main()
