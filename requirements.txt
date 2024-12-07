@@ -2,3 +2,7 @@ ollama
 neo4j
 streamlit
 requests
+datetime
+uuid
+hashlib
+typing
