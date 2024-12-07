@@ -1,6 +1,4 @@
-transformers
-fastapi
-uvicorn
+ollama
 neo4j
-openai
 streamlit
+requests
