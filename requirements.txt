@@ -1,0 +1,6 @@
+transformers
+fastapi
+uvicorn
+neo4j
+openai
+streamlit
